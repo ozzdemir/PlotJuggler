@@ -87,12 +87,5 @@ MoveData(PlotDataMapRef &source,
 
   moveDataImpl( source.user_defined, destination.user_defined );
 
-  // copy the groups
-  for(const auto& it: source.groups)
-  {
-    const auto& name = it.first;
-    destination.groups[name] = it.second;
-  }
-
   return { added_curves, num_updated || str_updated };
 }

@@ -40,9 +40,9 @@ class CurvesView
 public:
 
   enum CustomRoles{
+    Name = Qt::UserRole,
     IsGroupName = Qt::UserRole + 1,
-    ToolTip = Qt::UserRole + 2,
-    Name = Qt::UserRole + 3
+    ToolTip = Qt::UserRole + 2
   };
 
   CurvesView(CurveListPanel* parent);

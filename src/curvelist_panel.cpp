@@ -123,11 +123,13 @@ void CurveListPanel::addCustom(const QString& item_name)
 
 void CurveListPanel::updateColors()
 {
+  QColor default_color = _tree_view->palette().color( QPalette::Text );
+
   auto ChangeTextColorVisitor = [&](QTreeWidgetItem* cell) {
 
     if( cell->childCount() == 0 )
     {
-      const std::string& curve_name = cell->data(0, Qt::UserRole).toString().toStdString();
+      const std::string& curve_name = cell->data(0, CurvesView::Name).toString().toStdString();
 
       QVariant text_color;
 
@@ -136,7 +138,8 @@ void CurveListPanel::updateColors()
         if ( it != plot_data.end() )
         {
           QVariant text_color = it->second.attribute("TextColor");
-          cell->setData(0, Qt::TextColorRole, text_color );
+          cell->setForeground(0, text_color.isValid() ? text_color.value<QColor>() :
+                                                        default_color );
 
           QVariant tooltip = it->second.attribute("ToolTip");
           cell->setData(0, CurvesView::ToolTip, tooltip );
@@ -157,7 +160,8 @@ void CurveListPanel::updateColors()
       if ( it != _plot_data.groups.end() )
       {
         QVariant text_color = it->second->attribute("TextColor");
-        cell->setData(0, Qt::TextColorRole, text_color );
+        cell->setForeground(0, text_color.isValid() ? text_color.value<QColor>() :
+                                                      default_color );
 
         QVariant tooltip = it->second->attribute("ToolTip");
         cell->setData(0, CurvesView::ToolTip, tooltip );
