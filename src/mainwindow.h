@@ -113,7 +113,7 @@ private:
   std::map<QString, DataStreamerPtr> _data_streamer;
   std::map<QString, std::shared_ptr<MessageParserCreator>> _message_parser_factory;
 
-  std::shared_ptr<DataStreamer> _active_streamer_plugin;
+  std::vector<std::shared_ptr<DataStreamer>> _active_streamer_plugins;
 
   std::deque<QDomDocument> _undo_states;
   std::deque<QDomDocument> _redo_states;

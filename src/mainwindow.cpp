@@ -64,7 +64,6 @@ MainWindow::MainWindow(const QCommandLineParser& commandline_parser, QWidget* pa
   , _streaming_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Space), this)
   , _playback_shotcut(Qt::Key_Space, this)
   , _minimized(false)
-  , _active_streamer_plugin(nullptr)
   , _disable_undo_logging(false)
   , _tracker_time(0)
   , _tracker_param(CurveTracker::VALUE)
@@ -1210,7 +1209,7 @@ void MainWindow::importPlotDataMap(PlotDataMapRef& new_data, bool remove_old)
 bool MainWindow::isStreamingActive() const
 {
   return !ui->buttonStreamingPause->isChecked() &&
-      _active_streamer_plugin;
+      !_active_streamer_plugins.empty();
 }
 
 bool MainWindow::loadDataFromFiles(QStringList filenames)
@@ -1395,7 +1394,7 @@ bool MainWindow::loadDataFromFile(const FileLoadInfo& info)
 
 void MainWindow::on_buttonStreamingPause_toggled(bool paused)
 {
-  if (!_active_streamer_plugin)
+  if (_active_streamer_plugins.empty()) //XXX: reverse active?
   {
     paused = true;
   }
@@ -1428,7 +1427,7 @@ void MainWindow::on_buttonStreamingPause_toggled(bool paused)
 
 void MainWindow::on_streamingToggled()
 {
-  if (_active_streamer_plugin)
+  if (!_active_streamer_plugins.empty())
   {
     bool prev_state = ui->buttonStreamingPause->isChecked();
     ui->buttonStreamingPause->setChecked(!prev_state);
@@ -1441,7 +1440,7 @@ void MainWindow::stopStreamingPlugin()
   ui->comboStreaming->setEnabled(true);
   ui->buttonStreamingStart->setText("Start");
   ui->buttonStreamingPause->setEnabled(false);
-  ui->labelStreamingAnimation->setHidden(true);
+  ui->labelStreamingAnimation->setHidden(false);
 
   // force the cleanups typically done in on_buttonStreamingPause_toggled
   if(  ui->buttonStreamingPause->isChecked() )
@@ -1453,12 +1452,14 @@ void MainWindow::stopStreamingPlugin()
     // call it manually
     on_buttonStreamingPause_toggled(true);
   }
-
-  if( _active_streamer_plugin ) {
-    _active_streamer_plugin->shutdown();
-    _active_streamer_plugin = nullptr;
+  /*
+  // FIXME: Comment stopping action temporarily.
+  for(auto active_streamer : _active_streamer_plugins)
+  {
+    active_streamer->shutdown();
   }
-
+  _active_streamer_plugins.clear();
+  
   if (!_mapped_plot_data.numeric.empty())
   {
     ui->actionDeleteAllData->setToolTip("");
@@ -1473,15 +1474,19 @@ void MainWindow::stopStreamingPlugin()
   {
     it.second.setMaximumRangeX(std::numeric_limits<double>::max());
   }
+  */
 }
 
 void MainWindow::startStreamingPlugin(QString streamer_name)
 {
+  /*
+  // For multiple streamers, dont remove the previous one
   if (_active_streamer_plugin)
   {
     _active_streamer_plugin->shutdown();
     _active_streamer_plugin = nullptr;
   }
+  */
 
   if (_data_streamer.empty())
   {
@@ -1492,42 +1497,57 @@ void MainWindow::startStreamingPlugin(QString streamer_name)
   auto it = _data_streamer.find(streamer_name);
   if (it != _data_streamer.end())
   {
-    _active_streamer_plugin = it->second;
+    _active_streamer_plugins.push_back(it->second);
   }
   else
   {
     qDebug() << "Error. The streamer " << streamer_name << " can't be loaded";
-    _active_streamer_plugin = nullptr;
     return;
   }
 
   bool started = false;
-  try
+  for(auto active_streamer : _active_streamer_plugins)
   {
-    // TODO data sources (argument to _active_streamer_plugin->start()
-    started = _active_streamer_plugin && _active_streamer_plugin->start(nullptr);
-  }
-  catch (std::runtime_error& err)
-  {
-    QMessageBox::warning(this, tr("Exception from the plugin"),
-                         tr("The plugin thrown the following exception: \n\n %1\n").arg(err.what()));
-    _active_streamer_plugin = nullptr;
-    return;
+    try
+    {
+      if(!active_streamer->isRunning())
+      {
+        active_streamer->start(nullptr);
+        started = true;
+      }
+      else
+      {
+        started = true;
+        continue;
+      }
+    }
+    catch (std::runtime_error& err)
+    {
+      qDebug() << "Exception from the plugin"
+               << QString("The plugin thrown the following exception: \n\n %1\n").arg(err.what());
+      QMessageBox::warning(this, tr("Exception from the plugin"),
+                          tr("The plugin thrown the following exception: \n\n %1\n").arg(err.what()));
+      //_active_streamer_plugins.erase(active_streamer); //FIXME: failing to erase due to iterator returning reference
+      return;
+    }
   }
   if (started)
   {
     {
-      std::lock_guard<std::mutex> lock(_active_streamer_plugin->mutex());
-      importPlotDataMap(_active_streamer_plugin->dataMap(), true);
+      for(auto active_streamer : _active_streamer_plugins)
+      {
+        std::lock_guard<std::mutex> lock(active_streamer->mutex());
+        importPlotDataMap(active_streamer->dataMap(), true);
+      }
     }
 
     ui->actionClearBuffer->setEnabled(true);
     ui->actionDeleteAllData->setToolTip("Stop streaming to be able to delete the data");
 
-    ui->buttonStreamingStart->setText("Stop");
+    ui->buttonStreamingStart->setText("Start");
     ui->buttonStreamingPause->setEnabled(true);
     ui->buttonStreamingPause->setChecked(false);
-    ui->comboStreaming->setEnabled(false);
+    ui->comboStreaming->setEnabled(true);
     ui->labelStreamingAnimation->setHidden(false);
 
     // force start
@@ -1540,7 +1560,7 @@ void MainWindow::startStreamingPlugin(QString streamer_name)
     QSignalBlocker block( ui->buttonStreamingStart );
     ui->buttonStreamingStart->setChecked(false);
     qDebug() << "Failed to launch the streamer";
-    _active_streamer_plugin = nullptr;
+    _active_streamer_plugins.clear();
   }
 }
 
@@ -1995,16 +2015,18 @@ void MainWindow::updateDataAndReplot(bool replot_hidden_tabs)
 {
   bool data_updated_by_streamer = false;
 
-  if (_active_streamer_plugin)
+  if (!_active_streamer_plugins.empty())
   {
     std::vector<QString> curvelist_added;
-
-    {
-      std::lock_guard<std::mutex> lock(_active_streamer_plugin->mutex());
-      auto res = MoveData(_active_streamer_plugin->dataMap(), _mapped_plot_data);
-      curvelist_added = res.first;
-      data_updated_by_streamer = res.second;
-    }
+      for(auto active_streamer : _active_streamer_plugins)
+      {
+        {
+        std::lock_guard<std::mutex> lock(active_streamer->mutex());
+        auto res = MoveData(active_streamer->dataMap(), _mapped_plot_data);
+        curvelist_added.insert(std::end(curvelist_added),std::begin(res.first), std::begin(res.first));
+        data_updated_by_streamer = res.second; //XXX: is this used in "for streamer" basis?  
+        }
+      }
 
     for (const auto& str : curvelist_added)
     {
@@ -2101,9 +2123,12 @@ void MainWindow::on_streamingSpinBox_valueChanged(int value)
     it.second.setMaximumRangeX(real_value);
   }
 
-  if (_active_streamer_plugin)
+  if (!_active_streamer_plugins.empty())
   {
-    _active_streamer_plugin->setMaximumRange(real_value);
+    for(auto active_streamer : _active_streamer_plugins)
+    {
+      active_streamer->setMaximumRange(real_value);      
+    }
   }
 }
 
@@ -2237,11 +2262,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
   _replot_timer->stop();
   _publish_timer->stop();
 
-  if (_active_streamer_plugin)
+  for(auto active_streamer : _active_streamer_plugins)
   {
-    _active_streamer_plugin->shutdown();
-    _active_streamer_plugin = nullptr;
+    active_streamer->shutdown();
   }
+  _active_streamer_plugins.clear();
+  
   QSettings settings;
   settings.setValue("MainWindow.geometry", saveGeometry());
   settings.setValue("MainWindow.state", saveState());
@@ -2687,10 +2713,11 @@ void MainWindow::on_pushButtonSaveLayout_clicked()
     }
     root.appendChild(loaded_list);
 
-    if (_active_streamer_plugin)
+    for(auto active_streamer : _active_streamer_plugins)
     {
+      // TODO: This loop would create multiple instances of previouslyLoaded_Streamer, might need to be handled
       QDomElement loaded_streamer = doc.createElement("previouslyLoaded_Streamer");
-      QString streamer_name = _active_streamer_plugin->name();
+      QString streamer_name = active_streamer->name();
       loaded_streamer.setAttribute("name", streamer_name);
       root.appendChild(loaded_streamer);
     }
